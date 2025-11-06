@@ -1,0 +1,48 @@
+{
+  "name": "Reservoir",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the reservoir"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Latitude coordinate"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Longitude coordinate"
+    },
+    "capacity": {
+      "type": "number",
+      "description": "Total capacity in cubic meters"
+    },
+    "current_level": {
+      "type": "number",
+      "description": "Current water level percentage"
+    },
+    "depth": {
+      "type": "number",
+      "description": "Maximum depth in meters"
+    },
+    "temperature": {
+      "type": "number",
+      "description": "Water temperature in Celsius"
+    },
+    "ph_level": {
+      "type": "number",
+      "description": "pH level of water"
+    },
+    "measurement_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of measurement"
+    }
+  },
+  "required": [
+    "name",
+    "latitude",
+    "longitude"
+  ]
+}
