@@ -1,73 +1,63 @@
-import './App.css';
-import myImage from './images/map.jpg';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from "react";
+import LatentGrid from "./components/LatentGrid";
 
 function App() {
-  const navigate = useNavigate();
+  const [activityData, setActivityData] = useState([]);
+  const [latentInfo, setLatentInfo] = useState([]);
+  const [forecastSites, setForecastSites] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [numRows, setNumRows] = useState(10);
 
-  const handleClick = () => {
-    navigate('/station-info');
-  };
+  // 🔹 Fetch latent activity + latent info
+  useEffect(() => {
+    fetch("http://localhost:5000/api/latent_activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}) // backend uses forecast_sites directly
+    })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Loaded latent activity:", data.activity);
+        setActivityData(data.activity);
+        setLatentInfo(data.latent_info);
+      })
+      .catch(err => console.error("Error fetching latent activity:", err));
+  }, []);
+
+  // 🔹 Fetch forecast sites
+  useEffect(() => {
+    fetch("http://localhost:5000/api/forecast_sites")
+      .then(res => res.json())
+      .then(data => setForecastSites(data.sites))
+      .catch(err => console.error("Error fetching forecast sites:", err));
+  }, []);
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Station Map</h1>
-        <div style={{ position: 'relative', display: 'inline-block' }}>
-          <img
-            src={myImage}
-            alt="Map"
-            style={{ width: '500px', height: '500px' }}
-          />
+    <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto" }}>
+      <h2>Latent Space Activity Viewer</h2>
 
-          {/* Clickable red point */}
-          <div
-            onClick={handleClick}
-            style={{
-              position: 'absolute',
-              top: '200px',
-              left: '100px',
-              width: '20px',
-              height: '20px',
-              backgroundColor: 'red',
-              borderRadius: '50%',
-              cursor: 'pointer',
-              border: '2px solid white',
-              boxShadow: '0 0 5px black'
-            }}
-          ></div>
-          <div
-            onClick={handleClick}
-            style={{
-              position: 'absolute',
-              top: '244px',
-              left: '134px',
-              width: '20px',
-              height: '20px',
-              backgroundColor: 'red',
-              borderRadius: '50%',
-              cursor: 'pointer',
-              border: '2px solid white',
-              boxShadow: '0 0 5px black'
-            }}
-          ></div>
-          <div
-            onClick={handleClick}
-            style={{
-              position: 'absolute',
-              top: '300px',
-              left: '400px',
-              width: '20px',
-              height: '20px',
-              backgroundColor: 'red',
-              borderRadius: '50%',
-              cursor: 'pointer',
-              border: '2px solid white',
-              boxShadow: '0 0 5px black'
-            }}
-          ></div>
+      <div style={{ display: "flex", gap: "2rem" }}>
+        {/* Latent Grid */}
+        <div style={{ flex: 3 }}>
+          <LatentGrid
+            activityData={activityData.slice(0, numRows)}
+            latentInfo={latentInfo.slice(0, numRows)}
+            onInference={(layer, dim, offset) =>
+              console.log("Inference:", layer, dim, offset)
+            }
+          />
         </div>
-      </header>
+
+        {/* Forecast Sites */}
+        <div style={{ flex: 1, borderLeft: "1px solid #ccc", paddingLeft: "1rem" }}>
+          <h3>Forecast Sites</h3>
+          <ul>
+            {forecastSites.map(site => (
+              <li key={site}>{site}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
