@@ -1,0 +1,14 @@
+{
+  "files": {
+    "main.css": "/he000295/vis4hof/static/css/main.48eb7410.css",
+    "main.js": "/he000295/vis4hof/static/js/main.aaedc00a.js",
+    "static/media/second.png": "/he000295/vis4hof/static/media/second.070bb6e69ee7f819cc1f.png",
+    "index.html": "/he000295/vis4hof/index.html",
+    "main.48eb7410.css.map": "/he000295/vis4hof/static/css/main.48eb7410.css.map",
+    "main.aaedc00a.js.map": "/he000295/vis4hof/static/js/main.aaedc00a.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.48eb7410.css",
+    "static/js/main.aaedc00a.js"
+  ]
+}
