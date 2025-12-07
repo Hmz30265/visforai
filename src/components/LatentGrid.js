@@ -3,6 +3,7 @@ import "./LatentGrid.css";
 
 export default function LatentGrid({ activityData = [], latentInfo = [], onInference }) {
     const [selected, setSelected] = useState({ layer: null, dim: null });
+    const [hovered, setHovered] = useState({ layer: null, dim: null, position: null });
     const [topK, setTopK] = useState(6);
     const [latentOffset, setLatentOffset] = useState(0);
     const layerNames = ["Daily", "Weekly", "Biweekly"];
@@ -27,6 +28,42 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
     const handleTopKChange = (e) => {
         const value = Number(e.target.value);
         if (value > 0 && value <= 24) setTopK(value);
+    };
+
+    const handleMouseEnter = (layer, dim, event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setHovered({ layer, dim, position: { x: rect.left + rect.width / 2, y: rect.top } });
+    };
+
+    const handleMouseLeave = () => {
+        setHovered({ layer: null, dim: null, position: null });
+    };
+
+    // Calculate Gaussian distribution values
+    const gaussian = (x, mean, std) => {
+        if (!std || std === 0) return 0;
+        const variance = std * std;
+        return Math.exp(-0.5 * Math.pow((x - mean) / std, 2)) / (std * Math.sqrt(2 * Math.PI));
+    };
+
+    // Generate Gaussian curve data points
+    const getGaussianCurve = (mean, std, numPoints = 100) => {
+        if (!std || std === 0) return [];
+        const range = 6 * std; // ±3σ range
+        const min = mean - range / 2;
+        const max = mean + range / 2;
+        const step = range / numPoints;
+        const points = [];
+        let maxY = 0;
+
+        for (let i = 0; i <= numPoints; i++) {
+            const x = min + i * step;
+            const y = gaussian(x, mean, std);
+            points.push({ x, y });
+            if (y > maxY) maxY = y;
+        }
+
+        return { points, maxY, min, max };
     };
 
     const getTopIndices = (arr, k) =>
@@ -92,8 +129,8 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                             <div className="latent-column-grid">
                                 {topDims.map(({ idx, val }) => {
                                     const isActive = selected.layer === layer && selected.dim === idx;
-                                    const mean = latentInfo[layer]?.mean?.[idx] ?? val;
-                                    const std = latentInfo[layer]?.std?.[idx] ?? 0;
+                                    const mean = Number(latentInfo[layer]?.mean?.[idx]) || val;
+                                    const std = Number(latentInfo[layer]?.std?.[idx]) || 0;
 
                                     const displayVal = isActive ? mean + latentOffset * std : val;
                                     const deltaVal = isActive ? (latentOffset * std).toFixed(3) : 0;
@@ -104,6 +141,8 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                                             key={idx}
                                             className="latent-cell"
                                             onClick={() => handleSelect(layer, idx)}
+                                            onMouseEnter={(e) => handleMouseEnter(layer, idx, e)}
+                                            onMouseLeave={handleMouseLeave}
                                             style={{
                                                 backgroundColor: bg,
                                                 border: isActive ? "3px solid black" : "1px solid #ccc",
@@ -111,7 +150,6 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                                                 boxShadow: isActive ? "0 0 8px rgba(0,0,0,0.35)" : "none",
                                                 transition: "all 0.15s ease-in-out",
                                                 cursor: "pointer",
-                                                // enforce text color via inline styles on the inner span too
                                                 display: "flex",
                                                 alignItems: "center",
                                                 justifyContent: "center",
@@ -122,7 +160,6 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                                             }}
                                             title={`mean: ${mean?.toFixed?.(3) ?? mean}  std: ${std?.toFixed?.(3) ?? std}`}
                                         >
-                                            {/* enforce color at the span level (helps override odd UA or CSS rules) */}
                                             <span style={{ color: text, WebkitTextFillColor: text }}>
                                                 {idx + 1}
                                             </span>
@@ -161,7 +198,7 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                         />
                     </label>
                     <span style={{ marginLeft: "10px" }}>
-                        Δlatent: {(latentOffset * (latentInfo[selected.layer]?.std?.[selected.dim] ?? 0)).toFixed(3)}
+                        Δlatent: {(latentOffset * (Number(latentInfo[selected.layer]?.std?.[selected.dim]) || 0)).toFixed(3)}
                     </span>
                 </div>
             ) : null}
@@ -187,6 +224,142 @@ export default function LatentGrid({ activityData = [], latentInfo = [], onInfer
                     Run Inference
                 </button>
             </div>
+
+            {/* Gaussian Distribution Tooltip */}
+            {hovered.layer !== null && hovered.dim !== null && hovered.position && latentInfo[hovered.layer]?.mean && (
+                <div
+                    style={{
+                        position: "fixed",
+                        left: `${hovered.position.x + 40}px`,
+                        top: `${hovered.position.y + 40}px`,
+                        zIndex: 1000,
+                        background: "white",
+                        border: "2px solid #333",
+                        borderRadius: "8px",
+                        padding: "12px",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                        pointerEvents: "none",
+                    }}
+                >
+                    <div style={{ fontSize: "12px", fontWeight: "bold", marginBottom: "8px", textAlign: "center" }}>
+                        Layer {hovered.layer + 1} - Dim {hovered.dim + 1}
+                    </div>
+                    {(() => {
+                        let hoverMean = Number(latentInfo[hovered.layer]?.mean?.[hovered.dim]) || 0;
+                        let hoverStd = Number(latentInfo[hovered.layer]?.std?.[hovered.dim]) || 0;
+                        
+                        // If both mean and std are zero, show default standard normal distribution
+                        if (hoverMean === 0 && hoverStd === 0) {
+                            hoverMean = 0;
+                            hoverStd = 1;
+                        }
+                        
+                        const curveData = getGaussianCurve(hoverMean, hoverStd, 150);
+                        
+                        if (!curveData.points || curveData.points.length === 0) {
+                            return <div style={{ fontSize: "11px", color: "#666" }}>No distribution data</div>;
+                        }
+
+                        const width = 280;
+                        const height = 160;
+                        const padding = { top: 20, right: 20, bottom: 40, left: 50 };
+                        const innerWidth = width - padding.left - padding.right;
+                        const innerHeight = height - padding.top - padding.bottom;
+
+                        const xScale = (x) => padding.left + ((x - curveData.min) / (curveData.max - curveData.min)) * innerWidth;
+                        const yScale = (y) => padding.top + innerHeight - (y / curveData.maxY) * innerHeight;
+
+                        // Build path for the curve
+                        const pathData = curveData.points
+                            .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`)
+                            .join(" ");
+
+                        // Mark mean position
+                        const meanX = xScale(hoverMean);
+                        const meanY = yScale(gaussian(hoverMean, hoverMean, hoverStd));
+
+                        return (
+                            <svg width={width} height={height} style={{ display: "block" }}>
+                                {/* Background */}
+                                <rect x={0} y={0} width={width} height={height} fill="white" />
+                                
+                                {/* Grid lines */}
+                                <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + innerHeight} stroke="#e5e7eb" />
+                                <line x1={padding.left} y1={padding.top + innerHeight} x2={padding.left + innerWidth} y2={padding.top + innerHeight} stroke="#e5e7eb" />
+                                
+                                {/* Y-axis ticks */}
+                                {[0, 0.5, 1].map((t) => {
+                                    const y = padding.top + innerHeight - t * innerHeight;
+                                    const val = (curveData.maxY * t).toFixed(3);
+                                    return (
+                                        <g key={t}>
+                                            <line x1={padding.left - 4} x2={padding.left} y1={y} y2={y} stroke="#ccc" />
+                                            <text x={padding.left - 8} y={y + 3} fontSize="9" textAnchor="end" fill="#666">{val}</text>
+                                        </g>
+                                    );
+                                })}
+                                
+                                {/* X-axis ticks */}
+                                {[-3, -2, -1, 0, 1, 2, 3].map((sigma) => {
+                                    const x = hoverMean + sigma * hoverStd;
+                                    const xPos = xScale(x);
+                                    if (xPos < padding.left || xPos > padding.left + innerWidth) return null;
+                                    return (
+                                        <g key={sigma}>
+                                            <line x1={xPos} y1={padding.top + innerHeight} x2={xPos} y2={padding.top + innerHeight + 4} stroke="#ccc" />
+                                            <text x={xPos} y={padding.top + innerHeight + 16} fontSize="9" textAnchor="middle" fill="#666">
+                                                {sigma === 0 ? "μ" : `${sigma}σ`}
+                                            </text>
+                                        </g>
+                                    );
+                                })}
+                                
+                                {/* Gaussian curve */}
+                                <path
+                                    d={pathData}
+                                    fill="none"
+                                    stroke="#3b82f6"
+                                    strokeWidth="2"
+                                />
+                                
+                                {/* Fill under curve */}
+                                <path
+                                    d={`${pathData} L ${xScale(curveData.max)} ${padding.top + innerHeight} L ${xScale(curveData.min)} ${padding.top + innerHeight} Z`}
+                                    fill="#3b82f6"
+                                    fillOpacity="0.1"
+                                />
+                                
+                                {/* Mean line */}
+                                <line
+                                    x1={meanX}
+                                    y1={padding.top}
+                                    x2={meanX}
+                                    y2={padding.top + innerHeight}
+                                    stroke="#ef4444"
+                                    strokeWidth="1.5"
+                                    strokeDasharray="4 2"
+                                />
+                                
+                                {/* Mean marker */}
+                                <circle cx={meanX} cy={meanY} r="4" fill="#ef4444" />
+                                
+                                {/* Labels */}
+                                <text x={padding.left + innerWidth / 2} y={height - 8} fontSize="10" textAnchor="middle" fill="#333">
+                                    Latent Value
+                                </text>
+                                <text x={12} y={padding.top + innerHeight / 2} fontSize="10" textAnchor="middle" transform={`rotate(-90 12 ${padding.top + innerHeight / 2})`} fill="#333">
+                                    Probability Density
+                                </text>
+                                
+                                {/* Stats text */}
+                                <text x={padding.left + innerWidth / 2} y={padding.top - 4} fontSize="10" textAnchor="middle" fill="#333" fontWeight="bold">
+                                    μ={hoverMean.toFixed(3)}, σ={hoverStd.toFixed(3)}
+                                </text>
+                            </svg>
+                        );
+                    })()}
+                </div>
+            )}
         </div>
     );
 }
