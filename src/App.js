@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import LatentGrid, { LatentDistributionDetail } from "./components/LatentGrid";
 import ForecastSites from "./components/ForecastSites";
 import RMSEChart from "./components/RMSEChart";
@@ -14,6 +14,11 @@ function App() {
     const [selectedDim, setSelectedDim] = useState({ layer: null, dim: null });
     const [inferenceResults, setInferenceResults] = useState({});
     const [isInferenceRunning, setIsInferenceRunning] = useState(false);
+    const [rightPanelWidth, setRightPanelWidth] = useState(300); // Initial width for ForecastSites panel
+    const [isDragging, setIsDragging] = useState(false);
+    const containerRef = useRef(null);
+    const dragStartX = useRef(0);
+    const dragStartWidth = useRef(300);
 
     const handleSitesUpdate = useCallback((selected, rmseMap, horizon) => {
         console.log("handleSitesUpdate called:", { selected, rmseMap, horizon });
@@ -120,6 +125,37 @@ function App() {
             .catch(err => console.error("Error fetching forecast sites:", err));
     }, []);
 
+    // Handle drag start
+    const handleDragStart = useCallback((e) => {
+        setIsDragging(true);
+        dragStartX.current = e.clientX;
+        dragStartWidth.current = rightPanelWidth;
+        e.preventDefault();
+    }, [rightPanelWidth]);
+
+    // Handle drag
+    useEffect(() => {
+        if (!isDragging) return;
+
+        const handleMouseMove = (e) => {
+            const deltaX = dragStartX.current - e.clientX; // Inverted because we're dragging left
+            const newWidth = Math.max(200, Math.min(800, dragStartWidth.current + deltaX));
+            setRightPanelWidth(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+        };
+
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+
+        return () => {
+            document.removeEventListener("mousemove", handleMouseMove);
+            document.removeEventListener("mouseup", handleMouseUp);
+        };
+    }, [isDragging]);
+
     return (
         <div style={{ padding: "1rem", maxWidth: "1600px", margin: "0 auto" }}>
             {/* Debug info */}
@@ -134,9 +170,9 @@ function App() {
                 <strong>Debug:</strong> focusedSite = {focusedSite !== null ? focusedSite : 'null'}
             </div>
 
-            <div style={{ display: "flex", gap: "2rem" }}>
+            <div ref={containerRef} style={{ display: "flex", gap: 0 }}>
                 {/* Latent Grid */}
-                <div style={{ flex: 3 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                     <LatentGrid
                         activityData={activityData}
                         latentInfo={latentInfo}
@@ -148,16 +184,53 @@ function App() {
                 </div>
 
                 {/* Detailed Distribution in the middle */}
-                <div style={{ flex: 2 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                     <LatentDistributionDetail
                         selectedDim={selectedDim}
                         latentInfo={latentInfo}
                     />
                 </div>
 
+                {/* Draggable Divider */}
+                <div
+                    onMouseDown={handleDragStart}
+                    style={{
+                        width: "4px",
+                        cursor: "col-resize",
+                        backgroundColor: isDragging ? "#0ea5e9" : "#ccc",
+                        transition: isDragging ? "none" : "background-color 0.2s",
+                        position: "relative",
+                        flexShrink: 0,
+                    }}
+                    title="Drag to resize"
+                >
+                    <div
+                        style={{
+                            position: "absolute",
+                            left: "-2px",
+                            top: 0,
+                            bottom: 0,
+                            width: "8px",
+                            cursor: "col-resize",
+                        }}
+                    />
+                </div>
+
                 {/* Forecast Sites */}
-                <div style={{ flex: 1, borderLeft: "1px solid #ccc", paddingLeft: "1rem" }}>
-                    <ForecastSites sites={forecastSites} onUpdate={handleSitesUpdate} />
+                <div 
+                    style={{ 
+                        width: `${rightPanelWidth}px`,
+                        flexShrink: 0,
+                        borderLeft: "1px solid #ccc",
+                        paddingLeft: "1rem",
+                        overflow: "hidden"
+                    }}
+                >
+                    <ForecastSites 
+                        sites={forecastSites} 
+                        onUpdate={handleSitesUpdate}
+                        containerWidth={rightPanelWidth}
+                    />
                 </div>
             </div>
 

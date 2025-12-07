@@ -83,7 +83,7 @@ export default function RMSEChart({
             }
             setDetailed({ loading: true, error: null, pred: null, target: null });
             try {
-                const res = await fetch(`http://localhost:5000/api/site_forecast?site=${encodeURIComponent(focusedSite)}&lead=${selectedDay}`);
+                const res = await fetch(`https://visforai-backend.fly.dev/api/site_forecast?site=${encodeURIComponent(focusedSite)}&lead=${selectedDay}`);
                 const data = await res.json();
                 if (!res.ok) {
                     setDetailed({ loading: false, error: data.error || "Error loading site forecast", pred: null, target: null });
