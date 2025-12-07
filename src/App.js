@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
-import LatentGrid from "./components/LatentGrid";
+import React, { useEffect, useState, useCallback } from "react";
+import LatentGrid, { LatentDistributionDetail } from "./components/LatentGrid";
 import ForecastSites from "./components/ForecastSites";
 import RMSEChart from "./components/RMSEChart";
 
@@ -7,31 +7,102 @@ function App() {
     const [activityData, setActivityData] = useState([]);
     const [latentInfo, setLatentInfo] = useState([]);
     const [forecastSites, setForecastSites] = useState([]);
-    const [selected, setSelected] = useState(null);
-    const [numRows, setNumRows] = useState(10);
     const [selectedSites, setSelectedSites] = useState([]);
     const [sitesRmse, setSitesRmse] = useState({});
     const [rmseHorizon, setRmseHorizon] = useState(0);
     const [focusedSite, setFocusedSite] = useState(null);
-    const [leftWidth, setLeftWidth] = useState(75); // percentage of container width
-    const [isDragging, setIsDragging] = useState(false);
-    const containerRef = useRef(null);
+    const [selectedDim, setSelectedDim] = useState({ layer: null, dim: null });
+    const [inferenceResults, setInferenceResults] = useState({});
+    const [isInferenceRunning, setIsInferenceRunning] = useState(false);
 
-    // callback for ForecastSites — made stable with useCallback to avoid infinite re-renders
-    // now supports an optional 'focused' param from the child
-    const handleSitesUpdate = useCallback((selected, rmseMap, horizon, focused) => {
+    const handleSitesUpdate = useCallback((selected, rmseMap, horizon) => {
+        console.log("handleSitesUpdate called:", { selected, rmseMap, horizon });
         setSelectedSites(selected || []);
         setSitesRmse(rmseMap || {});
         setRmseHorizon(horizon || 0);
-        setFocusedSite(focused || null);
     }, []);
 
-    // 🔹 Fetch latent activity + latent info
+    // New callback for when RMSEChart changes the focused site
+    const handleFocusedSiteChange = useCallback((site) => {
+        console.log("Focused site changed to:", site);
+        setFocusedSite(site);
+    }, []);
+
+    // Auto-set focused site when only one site is selected
+    useEffect(() => {
+        if (selectedSites.length === 1 && focusedSite === null) {
+            const site = selectedSites[0];
+            console.log("Auto-focusing single selected site:", site);
+            setFocusedSite(site);
+        }
+    }, [selectedSites, focusedSite]);
+
+    const handleInference = useCallback(async (layer, dim, offset) => {
+        console.log("handleInference called:", { focusedSite, layer, dim, offset });
+        
+        // Validate inputs
+        if (focusedSite === null || focusedSite === undefined) {
+            alert("Please select a site first");
+            return;
+        }
+
+        if (layer === null || dim === null) {
+            alert("Please select a latent dimension first");
+            return;
+        }
+
+        setIsInferenceRunning(true);
+
+        try {
+            // Convert focusedSite to integer (it might be a string)
+            const siteIdx = parseInt(focusedSite, 10);
+            
+            console.log("Sending inference request:", { site_idx: siteIdx, layer, dim, offset });
+            
+            const response = await fetch("https://visforai-backend.fly.dev/api/inference", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    site_idx: siteIdx,
+                    layer: layer,
+                    dim: dim,
+                    offset: offset
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            // Store the inference results
+            setInferenceResults(prev => ({
+                ...prev,
+                [focusedSite]: {
+                    predictions: data.shifted_pred,
+                    layer: layer,
+                    dim: dim,
+                    offset: offset,
+                    timestamp: new Date().toISOString()
+                }
+            }));
+
+            console.log(`Inference complete for site ${focusedSite}:`, data);
+            
+        } catch (err) {
+            console.error("Error running inference:", err);
+            alert(`Error running inference: ${err.message}`);
+        } finally {
+            setIsInferenceRunning(false);
+        }
+    }, [focusedSite]);
+
     useEffect(() => {
         fetch("https://visforai-backend.fly.dev/api/latent_activity", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}) // backend uses forecast_sites directly
+            body: JSON.stringify({})
         })
             .then(res => res.json())
             .then(data => {
@@ -42,7 +113,6 @@ function App() {
             .catch(err => console.error("Error fetching latent activity:", err));
     }, []);
 
-    // 🔹 Fetch forecast sites
     useEffect(() => {
         fetch("https://visforai-backend.fly.dev/api/forecast_sites")
             .then(res => res.json())
@@ -50,116 +120,84 @@ function App() {
             .catch(err => console.error("Error fetching forecast sites:", err));
     }, []);
 
-    // Handle divider dragging
-    const handleMouseDown = (e) => {
-        setIsDragging(true);
-        e.preventDefault();
-    };
-
-    useEffect(() => {
-        const handleMouseMove = (e) => {
-            if (!isDragging || !containerRef.current) return;
-            
-            const container = containerRef.current;
-            const rect = container.getBoundingClientRect();
-            const newLeftWidth = ((e.clientX - rect.left) / rect.width) * 100;
-            
-            // Constrain between 20% and 80% to prevent sections from becoming too small
-            const constrainedWidth = Math.max(20, Math.min(80, newLeftWidth));
-            setLeftWidth(constrainedWidth);
-        };
-
-        const handleMouseUp = () => {
-            setIsDragging(false);
-        };
-
-        if (isDragging) {
-            document.addEventListener("mousemove", handleMouseMove);
-            document.addEventListener("mouseup", handleMouseUp);
-            document.body.style.cursor = "col-resize";
-            document.body.style.userSelect = "none";
-        }
-
-        return () => {
-            document.removeEventListener("mousemove", handleMouseMove);
-            document.removeEventListener("mouseup", handleMouseUp);
-            document.body.style.cursor = "";
-            document.body.style.userSelect = "";
-        };
-    }, [isDragging]);
-
     return (
         <div style={{ padding: "1rem", maxWidth: "1600px", margin: "0 auto" }}>
-            {/* page-level header removed: LatentGrid shows its own title */}
+            {/* Debug info */}
+            <div style={{ 
+                padding: "0.5rem 1rem", 
+                backgroundColor: "#f0f9ff", 
+                borderRadius: "4px",
+                marginBottom: "1rem",
+                fontSize: "14px",
+                fontFamily: "monospace"
+            }}>
+                <strong>Debug:</strong> focusedSite = {focusedSite !== null ? focusedSite : 'null'}
+            </div>
 
-            <div 
-                ref={containerRef}
-                style={{ 
-                    display: "flex", 
-                    position: "relative",
-                    width: "100%"
-                }}
-            >
-                {/* Latent Grid (now includes title/legend) */}
-                <div style={{ 
-                    width: `${leftWidth}%`,
-                    minWidth: "300px",
-                    paddingRight: "8px"
-                }}>
+            <div style={{ display: "flex", gap: "2rem" }}>
+                {/* Latent Grid */}
+                <div style={{ flex: 3 }}>
                     <LatentGrid
-                        activityData={activityData.slice(0, numRows)}
-                        latentInfo={latentInfo.slice(0, numRows)}
-                        onInference={(layer, dim, offset) =>
-                            console.log("Inference:", layer, dim, offset)
-                        }
+                        activityData={activityData}
+                        latentInfo={latentInfo}
+                        focusedSite={focusedSite}
+                        onInference={handleInference}
+                        onSelectDimension={setSelectedDim}
+                        isInferenceRunning={isInferenceRunning}
                     />
                 </div>
 
-                {/* Draggable Divider */}
-                <div
-                    onMouseDown={handleMouseDown}
-                    style={{
-                        width: "8px",
-                        cursor: "col-resize",
-                        backgroundColor: isDragging ? "#3b82f6" : "#e5e7eb",
-                        position: "relative",
-                        flexShrink: 0,
-                        transition: isDragging ? "none" : "background-color 0.2s",
-                    }}
-                >
-                    <div
-                        style={{
-                            position: "absolute",
-                            top: "50%",
-                            left: "50%",
-                            transform: "translate(-50%, -50%)",
-                            width: "4px",
-                            height: "40px",
-                            backgroundColor: "#9ca3af",
-                            borderRadius: "2px",
-                        }}
+                {/* Detailed Distribution in the middle */}
+                <div style={{ flex: 2 }}>
+                    <LatentDistributionDetail
+                        selectedDim={selectedDim}
+                        latentInfo={latentInfo}
                     />
                 </div>
 
                 {/* Forecast Sites */}
-                <div style={{ 
-                    width: `${100 - leftWidth}%`,
-                    minWidth: "300px",
-                    paddingLeft: "8px"
-                }}>
+                <div style={{ flex: 1, borderLeft: "1px solid #ccc", paddingLeft: "1rem" }}>
                     <ForecastSites sites={forecastSites} onUpdate={handleSitesUpdate} />
                 </div>
             </div>
 
-            {/* RMSE Chart area below */}
+            {/* RMSE Chart */}
             <div style={{ marginTop: "1.5rem" }}>
                 <RMSEChart
                     sitesRmse={sitesRmse}
                     selectedSites={selectedSites}
                     horizon={rmseHorizon}
                     focusedSiteProp={focusedSite}
+                    onFocusedSiteChange={handleFocusedSiteChange}
+                    inferenceResults={inferenceResults[focusedSite]}
                 />
             </div>
+
+            {/* Optional: Display inference results */}
+            {inferenceResults[focusedSite] && (
+                <div style={{
+                    marginTop: "1.5rem",
+                    padding: "1rem",
+                    backgroundColor: "#f0f9ff",
+                    borderRadius: "8px",
+                    border: "1px solid #0ea5e9"
+                }}>
+                    <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "18px" }}>
+                        Latest Inference for Site {focusedSite}
+                    </h3>
+                    <div style={{ fontSize: "14px", color: "#666", marginBottom: "0.5rem" }}>
+                        Layer: {inferenceResults[focusedSite].layer}, 
+                        Dim: {inferenceResults[focusedSite].dim}, 
+                        Offset: {inferenceResults[focusedSite].offset}σ
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#666" }}>
+                        Predictions length: {inferenceResults[focusedSite].predictions?.length || 0} timesteps
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#999", marginTop: "0.5rem" }}>
+                        View the shifted prediction overlaid on the detailed forecast plot above
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

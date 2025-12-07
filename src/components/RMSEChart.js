@@ -2,7 +2,6 @@ import React, { useMemo, useState, useEffect } from "react";
 
 const COLORS = ["#0b5cff", "#f97316", "#059669", "#b91c1c", "#7c3aed", "#0369a1", "#f43f5e", "#f59e0b"];
 
-// Helper: format Date to YYYY-MM-DD
 function formatDate(d) {
     const yyyy = d.getUTCFullYear();
     const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -10,8 +9,7 @@ function formatDate(d) {
     return `${yyyy}-${mm}-${dd}`;
 }
 
-// start date per your note
-const START_DATE = new Date(Date.UTC(2021, 3, 15)); // April 15, 2021 (month is 0-based)
+const START_DATE = new Date(Date.UTC(2021, 3, 15)); // April 15, 2021
 
 function niceMax(arr) {
     const m = Math.max(...arr);
@@ -24,7 +22,14 @@ function mean(arr = []) {
     return arr.reduce((a, b) => a + Number(b), 0) / arr.length;
 }
 
-export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon = 0, focusedSiteProp = null }) {
+export default function RMSEChart({ 
+    sitesRmse = {}, 
+    selectedSites = [], 
+    horizon = 0, 
+    focusedSiteProp = null,
+    onFocusedSiteChange = () => {},
+    inferenceResults = null 
+}) {
     const [selectedDay, setSelectedDay] = useState(1);
     const [focusedSite, setFocusedSite] = useState(focusedSiteProp || (selectedSites.length === 1 ? selectedSites[0] : null));
     const [detailed, setDetailed] = useState({ loading: false, error: null, pred: null, target: null });
@@ -36,10 +41,19 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
 
     // auto-focus when only one site selected
     useEffect(() => {
-        if (!focusedSite && selectedSites.length === 1) setFocusedSite(selectedSites[0]);
-    }, [selectedSites, focusedSite]);
+        if (!focusedSite && selectedSites.length === 1) {
+            const newFocus = selectedSites[0];
+            setFocusedSite(newFocus);
+            onFocusedSiteChange(newFocus);
+        }
+    }, [selectedSites, focusedSite, onFocusedSiteChange]);
 
-    // build deterministic color map from selectedSites order
+    // Notify parent when focused site changes
+    const handleFocusedSiteChange = (site) => {
+        setFocusedSite(site);
+        onFocusedSiteChange(site);
+    };
+
     const colorMap = useMemo(() => {
         const map = {};
         selectedSites.forEach((s, i) => {
@@ -48,7 +62,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
         return map;
     }, [selectedSites]);
 
-    // prepare series for compact RMSE plot using colorMap
     const series = useMemo(() => {
         return selectedSites
             .filter(s => sitesRmse && sitesRmse[s] && Array.isArray(sitesRmse[s]))
@@ -59,7 +72,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
     const yMax = allValues.length ? Math.max(...allValues) : 1;
     const yTop = niceMax([yMax]);
 
-    // what color should the detailed plot use for the focused site?
     const focusedColor = focusedSite ? (colorMap[String(focusedSite)] || COLORS[0]) : COLORS[0];
 
     // Fetch detailed predictions/target for focusedSite & selectedDay
@@ -71,7 +83,7 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
             }
             setDetailed({ loading: true, error: null, pred: null, target: null });
             try {
-                const res = await fetch(`https://visforai-backend.fly.dev/api/site_forecast?site=${encodeURIComponent(focusedSite)}&lead=${selectedDay}`);
+                const res = await fetch(`http://localhost:5000/api/site_forecast?site=${encodeURIComponent(focusedSite)}&lead=${selectedDay}`);
                 const data = await res.json();
                 if (!res.ok) {
                     setDetailed({ loading: false, error: data.error || "Error loading site forecast", pred: null, target: null });
@@ -85,7 +97,7 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
         fetchDetail();
     }, [focusedSite, selectedDay]);
 
-    // compact chart geometry (wider / taller)
+    // compact chart geometry
     const leftWidth = 760;
     const leftHeight = 300;
     const pad = { l: 56, r: 16, t: 16, b: 48 };
@@ -98,27 +110,23 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
     };
     const yScale = (v) => pad.t + innerH - (v / (yTop || 1)) * innerH;
 
-    // For detailed plot x-axis: use START_DATE + shift (selectedDay - 1) + index
     const computeDateForIndex = (i) => {
         const dt = new Date(START_DATE);
         dt.setUTCDate(dt.getUTCDate() + (selectedDay - 1) + i);
         return dt;
     };
 
-    // choose tick frequency for date labels (max ~10 labels)
     const labelInterval = (n) => {
         if (n <= 10) return 1;
         return Math.ceil(n / 10);
     };
 
-    // Determine RMSE value to display for the focused site/day.
     const focusedRmseDay = (() => {
         try {
             const key = String(focusedSite);
             if (key && sitesRmse && Array.isArray(sitesRmse[key]) && sitesRmse[key].length >= selectedDay) {
                 return Number(sitesRmse[key][selectedDay - 1]);
             }
-            // fallback: compute from detailed arrays if available
             if (detailed.pred && detailed.target) {
                 const p = detailed.pred.map(Number);
                 const t = detailed.target.map(Number);
@@ -133,7 +141,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
         }
     })();
 
-    // Average RMSE across lead days (compact precomputed)
     const focusedAvgRmse = (() => {
         try {
             const key = String(focusedSite);
@@ -146,6 +153,14 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
         }
     })();
 
+    // Convert hex color to RGB with alpha for pastel overlay
+    const hexToRgba = (hex, alpha) => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
     return (
         <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
             {/* Left: compact RMSE per lead-day */}
@@ -153,11 +168,9 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                 <h4 style={{ margin: "0 0 8px 0" }}>Avg RMSE per Lead Day</h4>
                 <div style={{ border: "1px solid #e5e7eb", padding: 8, borderRadius: 6 }}>
                     <svg width="100%" viewBox={`0 0 ${leftWidth} ${leftHeight}`} style={{ width: "100%", height: "auto" }}>
-                        {/* axes */}
                         <line x1={pad.l} y1={pad.t} x2={pad.l} y2={pad.t + innerH} stroke="#ddd" />
                         <line x1={pad.l} y1={pad.t + innerH} x2={pad.l + innerW} y2={pad.t + innerH} stroke="#ddd" />
 
-                        {/* y ticks */}
                         {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
                             const val = (yTop * t);
                             const y = yScale(val);
@@ -169,7 +182,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                             );
                         })}
 
-                        {/* lines */}
                         {series.map((s) => {
                             const path = s.values.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(v)}`).join(" ");
                             return (
@@ -182,7 +194,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                             );
                         })}
 
-                        {/* vertical line for selectedDay */}
                         {selectedDay && horizon > 0 && (
                             <line
                                 x1={xScale(selectedDay - 1)}
@@ -194,25 +205,21 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                             />
                         )}
 
-                        {/* x axis labels: lead days */}
                         {Array.from({ length: Math.max(1, horizon) }).map((_, i) => (
                             <text key={i} x={xScale(i)} y={pad.t + innerH + 22} fontSize="11" textAnchor="middle" fill="#333">
                                 {i + 1}
                             </text>
                         ))}
 
-                        {/* x-axis label */}
                         <text x={pad.l + innerW / 2} y={leftHeight - 8} fontSize="13" textAnchor="middle" fill="#333">
                             Lead day (1..{horizon || "H"})
                         </text>
 
-                        {/* y-axis label */}
                         <text x={14} y={pad.t + innerH / 2} fontSize="13" textAnchor="middle" transform={`rotate(-90 14 ${pad.t + innerH / 2})`} fill="#333">
                             RMSE
                         </text>
                     </svg>
 
-                    {/* legend with colored labels */}
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
                         {series.map((s) => (
                             <div key={s.site} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -222,7 +229,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                         ))}
                     </div>
 
-                    {/* day selector */}
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
                         <label style={{ fontSize: 13 }}>Lead day:</label>
                         <input
@@ -238,11 +244,10 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                 </div>
             </div>
 
-            {/* Right: larger detailed forecast/time-series for focused site */}
+            {/* Right: detailed forecast for focused site */}
             <div style={{ flex: "1 1 840px", minWidth: 840 }}>
                 <h4 style={{ margin: "0 0 8px 0" }}>Detailed Forecast (focused site)</h4>
                 <div style={{ border: "1px solid #e5e7eb", padding: 12, borderRadius: 6 }}>
-                    {/* Top row: focus buttons (left) + RMSE metrics box (right) */}
                     <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                             <div style={{ fontSize: 13, color: "#666", marginRight: 8 }}>Focus site:</div>
@@ -255,7 +260,7 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                     return (
                                         <button
                                             key={s}
-                                            onClick={() => setFocusedSite(s)}
+                                            onClick={() => handleFocusedSiteChange(s)}
                                             style={{
                                                 padding: "6px 10px",
                                                 background: isFocused ? color : "#fff",
@@ -272,7 +277,6 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                             )}
                         </div>
 
-                        {/* RMSE metrics box */}
                         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                             {focusedSite ? (
                                 <div style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: "6px 10px", borderRadius: 8, border: "1px solid #eee" }}>
@@ -293,7 +297,7 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                     </div>
 
                     {!focusedSite ? (
-                        <div style={{ color: "#666" }}>No focused site. Shift+click a site in the list to focus it for details or use the buttons above.</div>
+                        <div style={{ color: "#666" }}>No focused site. Use the buttons above to focus a site for details.</div>
                     ) : detailed.loading ? (
                         <div>Loading detailed forecast for site {focusedSite} (lead {selectedDay})...</div>
                     ) : detailed.error ? (
@@ -302,15 +306,23 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                         <div>
                             <div style={{ fontSize: 13, marginBottom: 8 }}>
                                 Site <strong>{focusedSite}</strong> — Lead day <strong>{selectedDay}</strong>
+                                {inferenceResults && (
+                                    <span style={{ marginLeft: 12, color: "#7c3aed", fontWeight: 600 }}>
+                                        ● Shifted prediction shown
+                                    </span>
+                                )}
                             </div>
 
-                            {/* bigger SVG time-series with axis labels and legend */}
                             <div style={{ width: "100%", height: 420 }}>
                                 <svg width="100%" viewBox="0 0 920 420" style={{ width: "100%", height: "auto" }}>
                                     {(() => {
                                         const pred = detailed.pred.map(Number);
                                         const targ = detailed.target.map(Number);
-                                        const n = Math.max(pred.length, targ.length);
+                                        const shiftedPredRaw = inferenceResults?.predictions?.map(row => row[selectedDay - 1]) || [];
+
+                                        const n = pred.length; // match frontend’s detail length
+                                        const shiftedPred = shiftedPredRaw.slice(0, n);
+
                                         const left = 84;
                                         const right = 36;
                                         const top = 24;
@@ -320,8 +332,8 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                         const innerW = W - left - right;
                                         const innerH = H - top - bottom;
 
-                                        // compute y domain
                                         const all = [...pred, ...targ];
+                                        if (shiftedPred) all.push(...shiftedPred);
                                         const yMin = Math.min(...all);
                                         const yMax = Math.max(...all);
                                         const yPad = (yMax - yMin) * 0.06 || 1;
@@ -330,17 +342,14 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                         const yScale = (v) => top + innerH - ((v - ymin) / (ymax - ymin)) * innerH;
                                         const xScale = (i) => left + (innerW * (i / Math.max(1, n - 1)));
 
-                                        // axes
                                         const yTicks = 5;
                                         const yTickVals = Array.from({ length: yTicks }).map((_, i) => ymin + (i / (yTicks - 1)) * (ymax - ymin));
 
                                         return (
                                             <g>
-                                                {/* axes lines */}
                                                 <line x1={left} y1={top} x2={left} y2={top + innerH} stroke="#ddd" />
                                                 <line x1={left} y1={top + innerH} x2={left + innerW} y2={top + innerH} stroke="#ddd" />
 
-                                                {/* y ticks and labels */}
                                                 {yTickVals.map((val, i) => {
                                                     const y = yScale(val);
                                                     return (
@@ -351,10 +360,8 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                                     );
                                                 })}
 
-                                                {/* x ticks labels: compute date labels with offset (lead-1) */}
                                                 {Array.from({ length: n }).map((_, i) => {
                                                     const date = computeDateForIndex(i);
-                                                    // only label every interval to avoid crowding
                                                     const interval = labelInterval(n);
                                                     if (i % interval !== 0 && i !== n - 1) return null;
                                                     const x = xScale(i);
@@ -366,7 +373,24 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                                     );
                                                 })}
 
-                                                {/* prediction line (with markers in focused color) */}
+                                                {/* Shifted prediction (pastel, behind) */}
+                                                {shiftedPred && (
+                                                    <>
+                                                        <path
+                                                            d={shiftedPred.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(v)}`).join(" ")}
+                                                            fill="none"
+                                                            stroke="#7c3aed"
+                                                            strokeWidth={6}
+                                                            strokeOpacity={0.9}
+                                                            strokeDasharray="5,5"
+                                                        />
+                                                        {shiftedPred.map((v, i) => (
+                                                            <circle key={`sp-${i}`} cx={xScale(i)} cy={yScale(v)} r={2.6} fill="#7c3aed" fillOpacity={0.5} />
+                                                        ))}
+                                                    </>
+                                                )}
+
+                                                {/* Original prediction (solid, in front) */}
                                                 <path
                                                     d={pred.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(v)}`).join(" ")}
                                                     fill="none"
@@ -374,19 +398,18 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                                     strokeWidth={2}
                                                 />
 
-                                                {/* target as points only */}
+                                                {/* Target points */}
                                                 {targ.map((v, i) => <circle key={`t-${i}`} cx={xScale(i)} cy={yScale(v)} r={4} fill="#111" />)}
 
-                                                {/* prediction small circles */}
+                                                {/* Prediction circles */}
                                                 {pred.map((v, i) => <circle key={`p-${i}`} cx={xScale(i)} cy={yScale(v)} r={2.6} fill={focusedColor} />)}
 
-                                                {/* axis labels */}
                                                 <text x={left + innerW / 2} y={H - 28} fontSize="13" textAnchor="middle" fill="#111">Date</text>
                                                 <text x={18} y={top + innerH / 2} fontSize="13" textAnchor="middle" transform={`rotate(-90 18 ${top + innerH / 2})`} fill="#111">Stream temperature (°C)</text>
 
-                                                {/* legend (top-right) */}
-                                                <g transform={`translate(${left + innerW - 220}, ${top})`}>
-                                                    <rect x={0} y={0} width={200} height={62} rx={6} fill="#fff" stroke="#eee" />
+                                                {/* Legend */}
+                                                <g transform={`translate(${left + innerW - 240}, ${top})`}>
+                                                    <rect x={0} y={0} width={220} height={shiftedPred ? 86 : 62} rx={6} fill="#fff" stroke="#eee" />
                                                     <g transform="translate(10,10)">
                                                         <rect x={0} y={0} width={14} height={8} fill={focusedColor} />
                                                         <text x={22} y={8} fontSize="12" fill="#111">Prediction (line)</text>
@@ -395,14 +418,18 @@ export default function RMSEChart({ sitesRmse = {}, selectedSites = [], horizon 
                                                         <circle cx={7} cy={6} r={5} fill="#111" />
                                                         <text x={22} y={10} fontSize="12" fill="#111">Target (points)</text>
                                                     </g>
+                                                    {shiftedPred && (
+                                                        <g transform="translate(10,54)">
+                                                            <line x1={0} y1={4} x2={14} y2={4} stroke="#7c3aed" strokeWidth={2} strokeOpacity={0.5} strokeDasharray="3,3" />
+                                                            <text x={22} y={8} fontSize="12" fill="#7c3aed">Shifted prediction</text>
+                                                        </g>
+                                                    )}
                                                 </g>
                                             </g>
                                         );
                                     })()}
                                 </svg>
                             </div>
-
-                            {/* numeric summary moved to top, so no need at bottom */}
                         </div>
                     ) : (
                         <div style={{ color: "#666" }}>No detailed data available.</div>
